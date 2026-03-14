@@ -201,21 +201,22 @@ class TestDrawTrails(unittest.TestCase):
         draw_trails(frame, {})  # should not raise
 
     def test_no_crash_single_point_trail(self):
-        """Trails with only one point should not cause an error or drawing."""
+        """A single-point trail produces radius=0 so nothing is drawn."""
         frame = self._blank_frame()
-        trail = deque(maxlen=30)
+        trail = deque(maxlen=25)
         trail.append((100, 100))
         draw_trails(frame, {0: trail})
-        # Frame should remain all zeros (nothing drawn with <2 points)
+        # radius = int(12 * (0/1)) = 0 → skipped; frame stays all zeros
         self.assertTrue(np.all(frame == 0))
 
     def test_draws_on_frame_with_two_points(self):
-        """A trail with two points should modify the frame."""
+        """A two-point trail draws a circle at the head and modifies the frame."""
         frame = self._blank_frame()
-        trail = deque(maxlen=30)
+        trail = deque(maxlen=25)
         trail.append((10, 10))
         trail.append((50, 50))
         draw_trails(frame, {1: trail})
+        # Second point: radius = int(12 * (1/2)) = 6 → circle drawn
         self.assertFalse(np.all(frame == 0))
 
     def test_draws_multiple_trails(self):
@@ -223,7 +224,7 @@ class TestDrawTrails(unittest.TestCase):
         frame = self._blank_frame()
         histories = {}
         for pid in range(3):
-            trail = deque(maxlen=30)
+            trail = deque(maxlen=25)
             for i in range(10):
                 trail.append((pid * 30 + i, pid * 30 + i))
             histories[pid] = trail

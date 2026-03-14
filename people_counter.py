@@ -439,45 +439,49 @@ def detect_faces(face_cascade, frame, person_box):
 # Movement trails
 # ---------------------------------------------------------------------------
 def get_trail_color(obj_id: int) -> tuple:
-    """Return a unique pastel BGR color for the given object ID.
+    """Return a unique soft pastel BGR color for the given object ID.
 
-    Uses the ID to pick an evenly-spread hue then maps through HSV so every
-    person gets a soft, distinguishable pastel shade.
+    Uses the ID to pick an evenly-spread hue through HSV with low saturation
+    and high value so every person gets a distinct pastel shade.
     """
-    hue = int((obj_id * 47) % 180)  # spread hues across the 0-179 OpenCV range
-    hsv = np.uint8([[[hue, 120, 255]]])  # pastel: full value, moderate saturation
+    hue = int((obj_id * 37) % 180)
+    hsv = np.uint8([[[hue, 80, 220]]])
     bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
     return (int(bgr[0]), int(bgr[1]), int(bgr[2]))
 
 
 def draw_trails(frame: np.ndarray, trail_history: dict) -> None:
-    """Draw a fading movement trail for each tracked person.
+    """Draw a soft blob-shaped movement trail for each tracked person.
 
-    Each trail is drawn as a series of line segments from the oldest position
-    (tail) to the most recent (head).  Segments grow thicker and brighter
-    toward the head to give a smooth fade effect.
+    A separate overlay layer is built with filled circles whose radius grows
+    toward the most-recent (head) position, then blended onto the frame for a
+    glowing pastel effect.
 
     Parameters
     ----------
     frame         : BGR frame to draw on (modified in-place).
     trail_history : dict mapping object-ID → deque of (cx, cy) tuples.
     """
+    if not trail_history:
+        return
+
+    overlay = np.zeros_like(frame)
+
     for obj_id, trail in trail_history.items():
-        if len(trail) < 2:
+        pts = list(trail)
+        n = len(pts)
+        if n == 0:
             continue
 
         color = get_trail_color(obj_id)
-        pts = list(trail)
-        n = len(pts)
 
-        for i in range(1, n):
-            # alpha goes from ~0 at the tail to 1.0 at the head
-            alpha = i / n
-            thickness = max(1, int(4 * alpha))
-            # Darken the color toward the tail end for a fade effect
-            segment_color = tuple(int(c * alpha) for c in color)
-            cv2.line(frame, tuple(pts[i - 1]), tuple(pts[i]),
-                     segment_color, thickness)
+        for index, (cx, cy) in enumerate(pts):
+            radius = int(12 * (index / n))
+            if radius <= 0:
+                continue
+            cv2.circle(overlay, (cx, cy), radius, color, -1)
+
+    cv2.addWeighted(overlay, 0.6, frame, 1.0, 0, frame)
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +644,7 @@ def main():
             # -- Update movement trails --------------------------------------
             for obj_id, centroid in objects.items():
                 if obj_id not in trail_history:
-                    trail_history[obj_id] = deque(maxlen=30)
+                    trail_history[obj_id] = deque(maxlen=25)
                 trail_history[obj_id].append((int(centroid[0]), int(centroid[1])))
             # Evict trails for deregistered IDs
             stale_trails = set(trail_history) - set(objects)
