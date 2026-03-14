@@ -30,7 +30,7 @@ import argparse
 import os
 import sys
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 import cv2
 import numpy as np
@@ -436,6 +436,51 @@ def detect_faces(face_cascade, frame, person_box):
 
 
 # ---------------------------------------------------------------------------
+# Movement trails
+# ---------------------------------------------------------------------------
+def get_trail_color(obj_id: int) -> tuple:
+    """Return a unique pastel BGR color for the given object ID.
+
+    Uses the ID to pick an evenly-spread hue then maps through HSV so every
+    person gets a soft, distinguishable pastel shade.
+    """
+    hue = int((obj_id * 47) % 180)  # spread hues across the 0-179 OpenCV range
+    hsv = np.uint8([[[hue, 120, 255]]])  # pastel: full value, moderate saturation
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
+    return (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+
+
+def draw_trails(frame: np.ndarray, trail_history: dict) -> None:
+    """Draw a fading movement trail for each tracked person.
+
+    Each trail is drawn as a series of line segments from the oldest position
+    (tail) to the most recent (head).  Segments grow thicker and brighter
+    toward the head to give a smooth fade effect.
+
+    Parameters
+    ----------
+    frame         : BGR frame to draw on (modified in-place).
+    trail_history : dict mapping object-ID → deque of (cx, cy) tuples.
+    """
+    for obj_id, trail in trail_history.items():
+        if len(trail) < 2:
+            continue
+
+        color = get_trail_color(obj_id)
+        pts = list(trail)
+        n = len(pts)
+
+        for i in range(1, n):
+            # alpha goes from ~0 at the tail to 1.0 at the head
+            alpha = i / n
+            thickness = max(1, int(4 * alpha))
+            # Darken the color toward the tail end for a fade effect
+            segment_color = tuple(int(c * alpha) for c in color)
+            cv2.line(frame, tuple(pts[i - 1]), tuple(pts[i]),
+                     segment_color, thickness)
+
+
+# ---------------------------------------------------------------------------
 # Main application
 # ---------------------------------------------------------------------------
 def parse_args():
@@ -548,6 +593,7 @@ def main():
     heatmap = HeatmapAccumulator(
         frame_shape=(frame_h, frame_w), sigma=40
     )
+    trail_history: "dict[int, deque]" = {}  # obj_id → deque of (cx, cy)
 
     # -- State ---------------------------------------------------------------
     last_rects: list = []          # last detected bounding boxes
@@ -591,6 +637,16 @@ def main():
                 for stale_id in stale:
                     del ag_cache[stale_id]
 
+            # -- Update movement trails --------------------------------------
+            for obj_id, centroid in objects.items():
+                if obj_id not in trail_history:
+                    trail_history[obj_id] = deque(maxlen=30)
+                trail_history[obj_id].append((int(centroid[0]), int(centroid[1])))
+            # Evict trails for deregistered IDs
+            stale_trails = set(trail_history) - set(objects)
+            for stale_id in stale_trails:
+                del trail_history[stale_id]
+
             # -- Heatmap update ----------------------------------------------
             heatmap.update(objects.values())
 
@@ -618,6 +674,9 @@ def main():
                             )
                             if age and gender:
                                 ag_cache[obj_id] = (age, gender)
+
+            # -- Draw movement trails ----------------------------------------
+            draw_trails(frame, trail_history)
 
             # -- Draw bounding boxes & labels --------------------------------
             for obj_id, centroid in objects.items():
