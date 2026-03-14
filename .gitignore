@@ -1,0 +1,27 @@
+# Downloaded model files (large binaries — not committed)
+models/
+models/*.caffemodel
+models/*.weights
+
+# Heatmap output files
+heatmap_output.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
