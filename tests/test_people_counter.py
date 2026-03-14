@@ -17,9 +17,14 @@ import numpy as np
 # Ensure the repo root is on the path so we can import the module directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from collections import deque
+
 from people_counter import (
     CentroidTracker,
     HeatmapAccumulator,
+    draw_trajectory_lines,
+    draw_trails,
+    get_trail_color,
     non_max_suppression,
 )
 
@@ -160,6 +165,114 @@ class TestHeatmapAccumulator(unittest.TestCase):
             self.assertTrue(os.path.isfile(path))
         finally:
             os.unlink(path)
+
+
+
+
+# ---------------------------------------------------------------------------
+# Trail helper tests
+# ---------------------------------------------------------------------------
+class TestGetTrailColor(unittest.TestCase):
+    def test_returns_bgr_tuple(self):
+        color = get_trail_color(0)
+        self.assertIsInstance(color, tuple)
+        self.assertEqual(len(color), 3)
+
+    def test_values_in_valid_range(self):
+        for obj_id in range(20):
+            b, g, r = get_trail_color(obj_id)
+            self.assertGreaterEqual(b, 0)
+            self.assertLessEqual(b, 255)
+            self.assertGreaterEqual(g, 0)
+            self.assertLessEqual(g, 255)
+            self.assertGreaterEqual(r, 0)
+            self.assertLessEqual(r, 255)
+
+    def test_different_ids_produce_different_colors(self):
+        colors = {get_trail_color(i) for i in range(10)}
+        self.assertGreater(len(colors), 1)
+
+
+class TestDrawTrails(unittest.TestCase):
+    def _blank_frame(self):
+        return np.zeros((200, 320, 3), dtype=np.uint8)
+
+    def test_no_crash_empty_history(self):
+        frame = self._blank_frame()
+        draw_trails(frame, {})  # should not raise
+
+    def test_no_crash_single_point_trail(self):
+        """A single-point trail produces radius=0 so nothing is drawn."""
+        frame = self._blank_frame()
+        trail = deque(maxlen=25)
+        trail.append((100, 100))
+        draw_trails(frame, {0: trail})
+        # radius = int(12 * (0/1)) = 0 → skipped; frame stays all zeros
+        self.assertTrue(np.all(frame == 0))
+
+    def test_draws_on_frame_with_two_points(self):
+        """A two-point trail draws a circle at the head and modifies the frame."""
+        frame = self._blank_frame()
+        trail = deque(maxlen=25)
+        trail.append((10, 10))
+        trail.append((50, 50))
+        draw_trails(frame, {1: trail})
+        # Second point: radius = int(12 * (1/2)) = 6 → circle drawn
+        self.assertFalse(np.all(frame == 0))
+
+    def test_draws_multiple_trails(self):
+        """Multiple person trails should all be drawn without error."""
+        frame = self._blank_frame()
+        histories = {}
+        for pid in range(3):
+            trail = deque(maxlen=25)
+            for i in range(10):
+                trail.append((pid * 30 + i, pid * 30 + i))
+            histories[pid] = trail
+        draw_trails(frame, histories)
+        self.assertFalse(np.all(frame == 0))
+
+
+
+# ---------------------------------------------------------------------------
+# Trajectory line tests
+# ---------------------------------------------------------------------------
+class TestDrawTrajectoryLines(unittest.TestCase):
+    def _blank_frame(self):
+        return np.zeros((200, 320, 3), dtype=np.uint8)
+
+    def test_no_crash_empty_history(self):
+        frame = self._blank_frame()
+        draw_trajectory_lines(frame, {})  # should not raise
+
+    def test_no_crash_single_point_trail(self):
+        """A single-point trail has nothing to connect — frame stays blank."""
+        frame = self._blank_frame()
+        trail = deque(maxlen=25)
+        trail.append((100, 100))
+        draw_trajectory_lines(frame, {0: trail})
+        self.assertTrue(np.all(frame == 0))
+
+    def test_draws_line_with_two_points(self):
+        """Two points produce a visible line that modifies the frame."""
+        frame = self._blank_frame()
+        trail = deque(maxlen=25)
+        trail.append((10, 10))
+        trail.append((150, 150))
+        draw_trajectory_lines(frame, {1: trail})
+        self.assertFalse(np.all(frame == 0))
+
+    def test_draws_multiple_person_lines(self):
+        """Lines for multiple persons should all be drawn without error."""
+        frame = self._blank_frame()
+        histories = {}
+        for pid in range(3):
+            trail = deque(maxlen=25)
+            for i in range(5):
+                trail.append((pid * 40 + i * 5, pid * 40 + i * 5))
+            histories[pid] = trail
+        draw_trajectory_lines(frame, histories)
+        self.assertFalse(np.all(frame == 0))
 
 
 if __name__ == "__main__":

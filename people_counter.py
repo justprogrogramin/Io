@@ -30,7 +30,7 @@ import argparse
 import os
 import sys
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 import cv2
 import numpy as np
@@ -436,6 +436,76 @@ def detect_faces(face_cascade, frame, person_box):
 
 
 # ---------------------------------------------------------------------------
+# Movement trails
+# ---------------------------------------------------------------------------
+def get_trail_color(obj_id: int) -> tuple:
+    """Return a unique soft pastel BGR color for the given object ID.
+
+    Uses the ID to pick an evenly-spread hue through HSV with low saturation
+    and high value so every person gets a distinct pastel shade.
+    """
+    hue = int((obj_id * 37) % 180)
+    hsv = np.uint8([[[hue, 80, 220]]])
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
+    return (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+
+
+def draw_trails(frame: np.ndarray, trail_history: dict) -> None:
+    """Draw a soft blob-shaped movement trail for each tracked person.
+
+    A separate overlay layer is built with filled circles whose radius grows
+    toward the most-recent (head) position, then blended onto the frame for a
+    glowing pastel effect.
+
+    Parameters
+    ----------
+    frame         : BGR frame to draw on (modified in-place).
+    trail_history : dict mapping object-ID → deque of (cx, cy) tuples.
+    """
+    if not trail_history:
+        return
+
+    overlay = np.zeros_like(frame)
+
+    for obj_id, trail in trail_history.items():
+        pts = list(trail)
+        n = len(pts)
+        if n == 0:
+            continue
+
+        color = get_trail_color(obj_id)
+
+        for index, (cx, cy) in enumerate(pts):
+            radius = int(12 * (index / n))
+            if radius <= 0:
+                continue
+            cv2.circle(overlay, (cx, cy), radius, color, -1)
+
+    cv2.addWeighted(overlay, 0.6, frame, 1.0, 0, frame)
+
+
+def draw_trajectory_lines(frame: np.ndarray, trail_history: dict) -> None:
+    """Draw trajectory polylines connecting all recorded positions per person.
+
+    Lines are drawn directly on the frame (no overlay blending) using the same
+    pastel color as the corresponding blob trail so the path of travel is
+    clearly visible beneath the blob circles.
+
+    Parameters
+    ----------
+    frame         : BGR frame to draw on (modified in-place).
+    trail_history : dict mapping object-ID → deque of (cx, cy) tuples.
+    """
+    for obj_id, trail in trail_history.items():
+        pts = list(trail)
+        if len(pts) < 2:
+            continue
+        color = get_trail_color(obj_id)
+        for i in range(1, len(pts)):
+            cv2.line(frame, pts[i - 1], pts[i], color, 1)
+
+
+# ---------------------------------------------------------------------------
 # Main application
 # ---------------------------------------------------------------------------
 def parse_args():
@@ -548,6 +618,7 @@ def main():
     heatmap = HeatmapAccumulator(
         frame_shape=(frame_h, frame_w), sigma=40
     )
+    trail_history: "dict[int, deque]" = {}  # obj_id → deque of (cx, cy)
 
     # -- State ---------------------------------------------------------------
     last_rects: list = []          # last detected bounding boxes
@@ -591,6 +662,16 @@ def main():
                 for stale_id in stale:
                     del ag_cache[stale_id]
 
+            # -- Update movement trails --------------------------------------
+            for obj_id, centroid in objects.items():
+                if obj_id not in trail_history:
+                    trail_history[obj_id] = deque(maxlen=25)
+                trail_history[obj_id].append((int(centroid[0]), int(centroid[1])))
+            # Evict trails for deregistered IDs
+            stale_trails = set(trail_history) - set(objects)
+            for stale_id in stale_trails:
+                del trail_history[stale_id]
+
             # -- Heatmap update ----------------------------------------------
             heatmap.update(objects.values())
 
@@ -618,6 +699,10 @@ def main():
                             )
                             if age and gender:
                                 ag_cache[obj_id] = (age, gender)
+
+            # -- Draw movement trails ----------------------------------------
+            draw_trajectory_lines(frame, trail_history)
+            draw_trails(frame, trail_history)
 
             # -- Draw bounding boxes & labels --------------------------------
             for obj_id, centroid in objects.items():
