@@ -24,6 +24,8 @@ Download required model files first:
     python download_models.py
 """
 
+video = "/home/user/Downloads/my_video.mp4"
+
 import argparse
 import os
 import sys
@@ -497,7 +499,7 @@ def main():
     args = parse_args()
 
     # -- Open video source ---------------------------------------------------
-    src = 0 if args.input is None else args.input
+    src = video
     cap = cv2.VideoCapture(src)
     if not cap.isOpened():
         sys.exit(f"[ERROR] Cannot open video source: {src}")
