@@ -56,6 +56,10 @@ class PeopleCounterApp(tk.Tk):
 
         # Thread communication
         self._frame_queue: queue.Queue = queue.Queue(maxsize=2)
+        # Callbacks that need to run on the main thread (set from background thread).
+        # Using a queue instead of self.after() because tkinter._register /
+        # createcommand must only be called from the main thread in Python 3.12+.
+        self._ui_callback_queue: queue.Queue = queue.Queue()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -163,9 +167,8 @@ class PeopleCounterApp(tk.Tk):
         """Run the people-counter loop in a background thread."""
         cap = cv2.VideoCapture(src)
         if not cap.isOpened():
-            self.after(
-                0,
-                lambda: self._status_var.set(f"[ERROR] Cannot open: {src}"),
+            self._ui_callback_queue.put(
+                lambda: self._status_var.set(f"[ERROR] Cannot open: {src}")
             )
             return
 
@@ -277,20 +280,32 @@ class PeopleCounterApp(tk.Tk):
                 f"Done — {tracker.total_count} unique person(s) counted "
                 f"in {frame_index} frames."
             )
-            self.after(
-                0,
-                lambda s=summary: (
-                    self._status_var.set(s),
-                    self._start_btn.config(state=tk.NORMAL),
-                    self._stop_btn.config(state=tk.DISABLED),
-                ),
-            )
+
+            def _finish(s=summary):
+                self._status_var.set(s)
+                self._start_btn.config(state=tk.NORMAL)
+                self._stop_btn.config(state=tk.DISABLED)
+
+            self._ui_callback_queue.put(_finish)
 
     # ------------------------------------------------------------------
     # Frame polling (main thread)
     # ------------------------------------------------------------------
     def _poll_queue(self) -> None:
-        """Pull frames from the queue and update the canvas.  Reschedules itself."""
+        """Pull frames and UI callbacks from their queues on each tick.
+
+        Reschedules itself while the processing thread is alive or either
+        queue still has work pending.
+        """
+        # Drain any pending UI-update callbacks (posted by the background thread).
+        while True:
+            try:
+                cb = self._ui_callback_queue.get_nowait()
+                cb()
+            except queue.Empty:
+                break
+
+        # Display the next available video frame.
         try:
             img = self._frame_queue.get_nowait()
             photo = ImageTk.PhotoImage(image=img)
@@ -300,8 +315,13 @@ class PeopleCounterApp(tk.Tk):
         except queue.Empty:
             pass
 
-        # Keep polling while the thread is alive or there are frames left.
-        if (self._thread and self._thread.is_alive()) or not self._frame_queue.empty():
+        # Keep polling while there is still work to do.
+        thread_alive = self._thread is not None and self._thread.is_alive()
+        if (
+            thread_alive
+            or not self._frame_queue.empty()
+            or not self._ui_callback_queue.empty()
+        ):
             self.after(15, self._poll_queue)
 
 
