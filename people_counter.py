@@ -484,6 +484,27 @@ def draw_trails(frame: np.ndarray, trail_history: dict) -> None:
     cv2.addWeighted(overlay, 0.6, frame, 1.0, 0, frame)
 
 
+def draw_trajectory_lines(frame: np.ndarray, trail_history: dict) -> None:
+    """Draw trajectory polylines connecting all recorded positions per person.
+
+    Lines are drawn directly on the frame (no overlay blending) using the same
+    pastel color as the corresponding blob trail so the path of travel is
+    clearly visible beneath the blob circles.
+
+    Parameters
+    ----------
+    frame         : BGR frame to draw on (modified in-place).
+    trail_history : dict mapping object-ID → deque of (cx, cy) tuples.
+    """
+    for obj_id, trail in trail_history.items():
+        pts = list(trail)
+        if len(pts) < 2:
+            continue
+        color = get_trail_color(obj_id)
+        for i in range(1, len(pts)):
+            cv2.line(frame, pts[i - 1], pts[i], color, 1)
+
+
 # ---------------------------------------------------------------------------
 # Main application
 # ---------------------------------------------------------------------------
@@ -680,6 +701,7 @@ def main():
                                 ag_cache[obj_id] = (age, gender)
 
             # -- Draw movement trails ----------------------------------------
+            draw_trajectory_lines(frame, trail_history)
             draw_trails(frame, trail_history)
 
             # -- Draw bounding boxes & labels --------------------------------
